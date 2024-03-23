@@ -3,6 +3,7 @@ from typing import Dict, Union, Tuple, Optional
 from datetime import datetime
 import pandas as pd
 from bs4 import BeautifulSoup
+from selectolax.parser import HTMLParser
 from rich.console import Group, Text
 from rich.panel import Panel
 from rich import box
@@ -255,10 +256,93 @@ class FilingXbrl:
 
     @classmethod
     def parse(cls, xbrl_text: str):
-        soup = BeautifulSoup(xbrl_text, features="xml")
-        xbrl_tag = soup.find("xbrl")
+        soup = BeautifulSoup(xbrl_text, 'xml') # changing to 'lxml' breaks it
 
+        xbrl_tag = soup.find("xbrl")
+        
         xmlns = xbrl_tag.attrs.get("xmlns")
+        namespace2tag = {v: k.partition(':')[2] for k, v in xbrl_tag.attrs.items() if ':' in k}
+
+        unit_map = dict()
+        context_map = dict()
+
+        def get_unit(unit_ref: str):
+            return unit_map.get(unit_ref)
+
+        def get_context(context_ref: str) -> Optional[Tuple[str, str, Union[str, None]]]:
+            """Get the value of the context for that context id"""
+            context = context_map.get(context_ref)
+            if context:
+                start_date, end_date = context.get('period', (None, None))
+                dims: Union[str, None] = context.get('dimensions')
+                return start_date, end_date, dims
+
+        def handle_context(ctx):
+            context_id = ctx.attrs['id']
+            context_map[context_id] = {'id': child_text(ctx, 'identifier')}
+            instant = child_text(ctx, 'instant')
+            if instant:
+                context_map[context_id]['period'] = instant, instant
+            else:
+                context_map[context_id]['period'] = child_text(ctx, 'startDate'), child_text(ctx, 'endDate')
+
+            # Parse segments
+            segment = ctx.find('segment')
+            if segment:
+                context_map[context_id]['dimensions'] = str({m.attrs['dimension']: m.text
+                                                             for m in
+                                                             segment.find_all('xbrldi:explicitMember')})
+
+        def handle_unit(unit):
+            unit_id = unit.attrs['id']
+            divide = unit.find('divide')
+            if divide:
+                numerator = child_text(divide.find('unitNumerator'), 'measure')
+                denominator = child_text(divide.find('unitDenominator'), 'measure')
+                unit_map[unit_id] = f"{numerator} per {denominator}"
+            else:
+                unit_map[unit_id] = child_text(unit, 'measure') or ''
+
+            # Remove iso427 from units
+            unit_map[unit_id] = unit_map[unit_id].replace('iso4217:', '')
+
+        # Now parse facts
+        facts = []
+        for tag in xbrl_tag.find_all(recursive=False):
+            # instead of iterating through all the tags 3 times, we do it once
+            if tag.name=='context':
+                handle_context(tag)
+            elif tag.name=='unit':
+                handle_unit(tag)
+            if 'contextRef' in tag.attrs or 'unitRef' in tag.attrs:
+                ctx_ref = tag.attrs.get('contextRef')
+                start, end, dimensions = get_context(ctx_ref)
+                units = get_unit(tag.attrs.get('unitRef'))
+                facts.append({'namespace': namespace2tag.get(tag.namespace),
+                              'fact': tag.name,
+                              'value': tag.text,
+                              'units': units,
+                              'start_date': start,
+                              'end_date': end,
+                              'dimensions': dimensions})
+        facts_dataframe = (pd.DataFrame(facts)
+                           .assign(value=lambda df: df.value.replace({'true': True, 'false': False}),
+                                   period=lambda df: df.apply(lambda x: get_period(x['start_date'], x['end_date']),
+                                                              axis=1)
+                                   )
+
+                           )
+        return cls(facts=facts_dataframe,
+                   namespace_info=NamespaceInfo(xmlns=xmlns, namespace2tag=namespace2tag))
+
+    @classmethod
+    def parse_old(cls, xbrl_text: str):
+        soup = BeautifulSoup(xbrl_text, 'lxml') # changing to 'lxml' breaks it
+
+        #xbrl_tag = soup.find("xbrl")
+        xbrl_tag = soup.find("xbrli:xbrl")
+
+        xmlns = xbrl_tag.attrs.get("xmlns","")
         namespace2tag = {v: k.partition(':')[2] for k, v in xbrl_tag.attrs.items() if ':' in k}
 
         unit_map = dict()
