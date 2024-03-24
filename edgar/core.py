@@ -24,6 +24,7 @@ from fastcore.basics import listify
 from retry.api import retry_call
 from rich.logging import RichHandler
 from rich.prompt import Prompt
+from rate_limit_transport import *
 
 # Rich logging
 logging.basicConfig(
@@ -298,10 +299,12 @@ def client_headers():
 
 
 def http_client():
+    transport = RateLimitTransport()
     return httpx.Client(headers=client_headers(),
                         timeout=edgar_mode.http_timeout,
                         limits=edgar_mode.limits,
-                        default_encoding=autodetect)
+                        default_encoding=autodetect,
+                        transport=transport)
 
 
 def async_http_client():
