@@ -24,7 +24,7 @@ from fastcore.basics import listify
 from retry.api import retry_call
 from rich.logging import RichHandler
 from rich.prompt import Prompt
-from rate_limit_transport import *
+#from rate_limit_transport import *
 
 # Rich logging
 logging.basicConfig(
@@ -97,6 +97,21 @@ default_retries = 3
 
 limits = httpx.Limits(max_connections=default_max_connections)
 
+from ratemate import RateLimit
+rate_limit = RateLimit(max_count=10, per=1)  # 10 requests per 1 seconds
+
+class RateLimitTransport(httpx.BaseTransport):
+    def __init__(self, **kwargs):
+        self._wrapper = httpx.HTTPTransport(**kwargs)
+
+    def handle_request(self, request):
+        # Wait for any existing rate limits
+        rate_limit.wait()
+        response = self._wrapper.handle_request(request)
+        return response
+
+    def close(self):
+        self._wrapper.close()
 
 @dataclass
 class EdgarSettings:
