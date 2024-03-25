@@ -97,10 +97,10 @@ default_retries = 3
 
 limits = httpx.Limits(max_connections=default_max_connections)
 
-import modal
+#import modal
 #dictionary = modal.Dict.from_name("dictionary", create_if_missing=True)
-d = modal.Dict.lookup("dictionary")
-log.info(f"dictionary get from edgar core: {d.get('testing')}")
+#d = modal.Dict.lookup("dictionary")
+#log.info(f"dictionary get from edgar core: {d.get('testing')}")
 
 from ratemate import RateLimit
 rate_limit = RateLimit(max_count=10, per=1)  # 10 requests per 1 seconds
